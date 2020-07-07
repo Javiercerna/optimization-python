@@ -6,32 +6,43 @@ https://github.com/MMehrez/MPC-and-MHE-implementation-in-MATLAB-using-Casadi/tre
 import casadi
 import matplotlib.pyplot as plt
 import numpy as np
+import yaml
 
 import math
 
 
 class NonLinearMPC(object):
-    def __init__(self):
+    def __init__(self, controller_parameters):
+        print(controller_parameters)
         ## Prediction horizon (in steps)
-        self.N = 80
+        self.N = controller_parameters['N']
         ## Sampling time (in seconds)
-        self.dt = 0.2
+        self.dt = controller_parameters['dt']
         ## Weights on the state (x, y, angle) for all horizon steps
-        self.Q = casadi.SX([[1, 0, 0],
-                            [0, 1, 0],
-                            [0, 0, 1]])
+        self.Q = casadi.SX([[controller_parameters['Q_x'], 0, 0],
+                            [0, controller_parameters['Q_y'], 0],
+                            [0, 0, controller_parameters['Q_angle']]])
         ## Weights on the inputs (speed, angular_speed) for all horizon steps
-        self.R = casadi.SX([[1, 0],
-                            [0, 1]])
+        self.R = casadi.SX([[controller_parameters['R_speed'], 0],
+                            [0, controller_parameters['R_angular_speed']]])
         ## Number of states (x, y angle)
         self.nx = 3
         ## Number of inputs (speed, angular_speed)
         self.nu = 2
         ## Constraints in the state
-        self.position_limits = [-10, 10]
+        self.position_limits = [
+            controller_parameters['position_min'],
+            controller_parameters['position_max']
+        ]
         ## Constraints in the inputs
-        self.speed_limits = [-0.6, 0.6]
-        self.angular_speed_limits = [-math.pi / 4, math.pi / 4]
+        self.speed_limits = [
+            controller_parameters['speed_min'],
+            controller_parameters['speed_max']
+        ]
+        self.angular_speed_limits = [
+            controller_parameters['angular_speed_min'],
+            controller_parameters['angular_speed_max']
+        ]
         ## Casadi solver
         self.solver = None
         ## Casadi lower bounds on the state (inputs "u")
@@ -139,7 +150,10 @@ class NonLinearMPC(object):
 
 
 if __name__ == '__main__':
-    non_linear_mpc = NonLinearMPC()
+    with open('differential_drive.yaml', 'r') as f:
+        controller_parameters = yaml.load(f, Loader=yaml.SafeLoader)
+
+    non_linear_mpc = NonLinearMPC(controller_parameters)
 
     non_linear_mpc.setup_optimization_problem()
 

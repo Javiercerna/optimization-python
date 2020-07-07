@@ -3,3 +3,4 @@ casadi
 matplotlib
 numpy
 pylint
+pyyaml
