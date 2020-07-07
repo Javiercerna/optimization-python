@@ -4,6 +4,7 @@ https://github.com/MMehrez/MPC-and-MHE-implementation-in-MATLAB-using-Casadi/tre
 '''
 
 import casadi
+import matplotlib.pyplot as plt
 import numpy as np
 
 import math
@@ -148,3 +149,12 @@ if __name__ == '__main__':
     trajectory = non_linear_mpc.compute_optimal_trajectory(
         initial_state, goal_state
     )
+
+    x = np.array(trajectory[0, :])[0]
+    y = np.array(trajectory[1, :])[0]
+
+    plt.plot(initial_state[0], initial_state[1], 'bx')
+    plt.plot(goal_state[0], goal_state[1], 'gx')
+
+    plt.plot(x, y)
+    plt.show()
