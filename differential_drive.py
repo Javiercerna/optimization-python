@@ -13,7 +13,6 @@ import math
 
 class NonLinearMPC(object):
     def __init__(self, controller_parameters):
-        print(controller_parameters)
         ## Prediction horizon (in steps)
         self.N = controller_parameters['N']
         ## Sampling time (in seconds)
