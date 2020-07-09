@@ -1,4 +1,4 @@
-N: 60 # Prediction horizon (in steps)
+N: 40 # Prediction horizon (in steps)
 dt: 0.2 # Sampling time (in seconds)
 
 Q_x: 1 # Weight on the x position (state)

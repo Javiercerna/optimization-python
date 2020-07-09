@@ -81,12 +81,14 @@ class NonLinearMPC(object):
 
         X[:, 0] = P[0:self.nx]
 
-        for k in range(self.N):
+        for k in range(self.N - 1):
             f_values = f(
                 x=X[:, k][0], y=X[:, k][1], angle=X[:, k][2],
                 speed=U[:, k][0], angular_speed=U[:, k][1]
             )
             X[:, k + 1] = X[:, k] + casadi.vertcat(*f_values.values())
+
+        X[:, self.N] = P[self.nx:]
 
         J = self._make_cost_function(X, U, P)
         constraints = self._make_constraints(X)
