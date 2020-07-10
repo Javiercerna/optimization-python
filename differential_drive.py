@@ -8,146 +8,96 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yaml
 
-import math
-
 
 class NonLinearMPC(object):
     def __init__(self, controller_parameters):
         ## Prediction horizon (in steps)
         self.N = controller_parameters['N']
-        ## Sampling time (in seconds)
-        self.dt = controller_parameters['dt']
-        ## Weights on the state (x, y, angle) for all horizon steps
-        self.Q = casadi.SX([[controller_parameters['Q_x'], 0, 0],
-                            [0, controller_parameters['Q_y'], 0],
-                            [0, 0, controller_parameters['Q_angle']]])
         ## Weights on the inputs (speed, angular_speed) for all horizon steps
-        self.R = casadi.SX([[controller_parameters['R_speed'], 0],
+        self.R = casadi.DM([[controller_parameters['R_speed'], 0],
                             [0, controller_parameters['R_angular_speed']]])
+        ## Weight on the total time
+        self.kappa = controller_parameters['kappa']
         ## Number of states (x, y angle)
         self.nx = 3
         ## Number of inputs (speed, angular_speed)
         self.nu = 2
-        ## Constraints in the state
-        self.position_limits = [
-            controller_parameters['position_min'],
-            controller_parameters['position_max']
-        ]
-        ## Constraints in the inputs
-        self.speed_limits = [
-            controller_parameters['speed_min'],
-            controller_parameters['speed_max']
-        ]
-        self.angular_speed_limits = [
-            controller_parameters['angular_speed_min'],
-            controller_parameters['angular_speed_max']
-        ]
+        ## Minimum speed (in meters/seconds)
+        self.speed_min = controller_parameters['speed_min']
+        ## Maximum speed (in meters/seconds)
+        self.speed_max = controller_parameters['speed_max']
+        ## Minimum angular speed (in radians/seconds)
+        self.angular_speed_min = controller_parameters['angular_speed_min']
+        ## Maximum angular speed (in radians/seconds)
+        self.angular_speed_max = controller_parameters['angular_speed_max']
         ## Casadi solver
-        self.solver = None
-        ## Casadi lower bounds on the state (inputs "u")
-        self.lower_bound_x = [self.speed_limits[0], self.angular_speed_limits[0]] * self.N  # noqa
-        ## Casadi upper bounds on the state (inputs "u")
-        self.upper_bound_x = [self.speed_limits[1], self.angular_speed_limits[1]] * self.N  # noqa
-        ## Casadi function to reconstruct the trajectory from the inputs
-        self.reconstruct_trajectory = None
+        self.solver = casadi.Opti()
+        ## Casadi states X = [x, y, angle]
+        self.X = None
+        ## Casadi inputs U = [speed, angular_speed]
+        self.U = None
+        ## Casadi total time T
+        self.T = None
+        ## Casadi initial state X_0 = [x_0, y_0, angle_0]
+        self.initial_state = None
+        ## Casadi goal state X_G = [x_G, y_G, angle_G]
+        self.goal_state = None
 
     def setup_optimization_problem(self):
-        x = casadi.SX.sym('x')
-        y = casadi.SX.sym('y')
-        angle = casadi.SX.sym('angle')
-        speed = casadi.SX.sym('speed')
-        angular_speed = casadi.SX.sym('angular_speed')
+        self.X = self.solver.variable(self.nx, self.N + 1)
+        self.U = self.solver.variable(self.nu, self.N)
+        self.T = self.solver.variable()
 
-        states = [x, y, angle]
-        controls = [speed, angular_speed]
+        self.initial_state = self.solver.parameter(self.nx)
+        self.goal_state = self.solver.parameter(self.nx)
 
-        control_action = [
-            self.dt * speed * casadi.cos(angle),
-            self.dt * speed * casadi.sin(angle),
-            self.dt * angular_speed
-        ]
+        self._add_equality_constraints()
+        self._add_inequality_constraints()
+        self._add_cost_function()
 
-        f = casadi.Function(
-            'f',
-            states + controls, control_action,
-            ['x', 'y', 'angle', 'speed', 'angular_speed'],
-            ['d_x', 'd_y', 'd_angle']
-        )
+        self.solver.solver('ipopt')
 
-        U = casadi.SX.sym('U', self.nu, self.N)
-        P = casadi.SX.sym('P', 2 * self.nx)  # Initial state + reference state
+    def _add_equality_constraints(self):
+        self.solver.subject_to(self.X[:, 0] == self.initial_state)
+        self.solver.subject_to(self.X[:, -1] == self.goal_state)
 
-        X = casadi.SX.sym('X', self.nx, self.N + 1)
-
-        X[:, 0] = P[0:self.nx]
-
-        for k in range(self.N - 1):
-            f_values = f(
-                x=X[:, k][0], y=X[:, k][1], angle=X[:, k][2],
-                speed=U[:, k][0], angular_speed=U[:, k][1]
-            )
-            X[:, k + 1] = X[:, k] + casadi.vertcat(*f_values.values())
-
-        X[:, self.N] = P[self.nx:]
-
-        J = self._make_cost_function(X, U, P)
-        constraints = self._make_constraints(X)
-
-        nlp = {
-            'x': casadi.reshape(U, 2 * self.N, 1),
-            'f': J,
-            'g': casadi.vertcat(*constraints),
-            'p': P
-        }
-
-        self.solver = casadi.nlpsol('S', 'ipopt', nlp)
-        self.reconstruct_trajectory = self._make_reconstruct_trajectory(
-            X, U, P
-        )
-
-    def compute_optimal_trajectory(self, initial_state, goal_state):
-        initial_inputs = np.zeros((self.N, 2))
-
-        result = self.solver(
-            x0=casadi.reshape(initial_inputs.T, 2 * self.N, 1),
-            lbg=self.position_limits[0],
-            ubg=self.position_limits[1],
-            lbx=self.lower_bound_x,
-            ubx=self.upper_bound_x,
-            p=initial_state + goal_state
-        )
-
-        trajectory = self.reconstruct_trajectory(
-            casadi.vertcat(result['x'], initial_state, goal_state)
-        )
-
-        return trajectory
-
-    def _make_cost_function(self, X, U, P):
-        J = 0
+        dt = self.T / self.N
 
         for k in range(self.N):
-            state_objective = X[:, k] - P[self.nx:]
-            state_cost = state_objective.T @ self.Q @ state_objective
-            input_cost = U[:, k].T @ self.R @ U[:, k]
-            J += state_cost + input_cost
+            self.solver.subject_to(
+                [self.X[0, k + 1] == self.X[0, k] + dt * self.U
+                 [0, k] * casadi.cos(self.X[2, k]),
+                 self.X[1, k + 1] == self.X[1, k] + dt * self.U
+                 [0, k] * casadi.sin(self.X[2, k]),
+                 self.X[2, k + 1] == self.X[2, k] + dt * self.U
+                 [1, k]
+                 ]
+            )
 
-        return J
+    def _add_inequality_constraints(self):
+        self.solver.subject_to(self.T >= 0)
 
-    def _make_constraints(self, X):
-        constraints = []
+        self.solver.subject_to(self.speed_min <= self.U[0, :])
+        self.solver.subject_to(self.U[0, :] <= self.speed_max)
 
-        for k in range(self.N + 1):
-            constraints += [X[0, k], X[1, k]]
+        self.solver.subject_to(self.angular_speed_min <= self.U[1, :])
+        self.solver.subject_to(self.U[1, :] <= self.angular_speed_max)
 
-        return constraints
+    def _add_cost_function(self):
+        sum_input_costs = 0
 
-    def _make_reconstruct_trajectory(self, X, U, P):
-        return casadi.Function(
-            'ff',
-            [casadi.vertcat(casadi.reshape(U, 2 * self.N, 1), P)],
-            [X]
-        )
+        for k in range(self.N):
+            sum_input_costs += self.U[:, k].T @ self.R @ self.U[:, k]
+
+        self.solver.minimize(sum_input_costs + self.kappa * self.T)
+
+    def compute_optimal_trajectory(self, initial_state, goal_state):
+        self.solver.set_value(self.initial_state, initial_state)
+        self.solver.set_value(self.goal_state, goal_state)
+
+        result = self.solver.solve()
+
+        return result.value(self.X)
 
 
 if __name__ == '__main__':
@@ -165,11 +115,11 @@ if __name__ == '__main__':
         initial_state, goal_state
     )
 
-    x = np.array(trajectory[0, :])[0]
-    y = np.array(trajectory[1, :])[0]
+    x = np.array(trajectory[0, :])
+    y = np.array(trajectory[1, :])
 
     plt.plot(initial_state[0], initial_state[1], 'bx')
     plt.plot(goal_state[0], goal_state[1], 'gx')
-
     plt.plot(x, y)
+
     plt.show()

@@ -1,15 +1,10 @@
 N: 40 # Prediction horizon (in steps)
 dt: 0.2 # Sampling time (in seconds)
 
-Q_x: 1 # Weight on the x position (state)
-Q_y: 1 # Weight on the y position (state)
-Q_angle: 1 # Weight on the angle (state)
-
 R_speed: 1 # Weight on the speed (input)
 R_angular_speed: 1 # Weight on the angular speed (input)
+kappa: 1 # Weight on the total time
 
-position_min: -10 # Minimum position (in meters)
-position_max: 10 # Maximum position (in meters)
 speed_min: -0.6 # Minimum speed (in meters/seconds)
 speed_max: 0.6 # Maximum speed (in meters/seconds)
 angular_speed_min: -0.78 # (-pi / 4) Minimum angular speed (in radians/seconds)
